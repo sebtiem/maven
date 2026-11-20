@@ -219,6 +219,29 @@ public class BuildPlanExecutor {
         return cached;
     }
 
+    /**
+     * Tells whether a Mojo operates on a project together with its child modules. Such a Mojo gets the aggregation
+     * semantics of this builder: it runs once, on the reactor project that declares it, after all child modules
+     * reached the phase it is bound to; copies inherited by the child modules are suppressed; and it does not run
+     * if work in the aggregated modules failed or the bound phase is not part of the build.
+     * <p>
+     * Besides the deprecated {@code aggregator} flag, a Mojo declares this with an {@code @After} constraint of
+     * type {@code CHILDREN}, which states the dependency on the child modules explicitly.
+     *
+     * @param descriptor the descriptor of the Mojo
+     * @return {@code true} if the Mojo aggregates over the child modules of the project it runs on
+     */
+    private static boolean aggregatesChildren(MojoDescriptor descriptor) {
+        if (descriptor.isAggregator()) {
+            return true;
+        }
+        if (!descriptor.isV4Api()) {
+            return false;
+        }
+        List<AfterLink> afterLinks = descriptor.getMojoDescriptorV4().getAfterLinks();
+        return afterLinks != null && afterLinks.stream().anyMatch(link -> "CHILDREN".equals(link.getType()));
+    }
+
     private static boolean requiresDependencyOrdering(MojoDescriptor descriptor) {
         if (descriptor.isV4Api()) {
             return !descriptor.getMojoDescriptorV4().getResolutions().isEmpty();
@@ -882,7 +905,7 @@ public class BuildPlanExecutor {
             // lifecycle aggregation semantics. Explicit native hooks keep their own semantics.
             return step.phase != null
                     && execution.getLifecyclePhase() != null
-                    && execution.getMojoDescriptor().isAggregator()
+                    && aggregatesChildren(execution.getMojoDescriptor())
                     && (!(step.name.startsWith(BEFORE) || step.name.startsWith(AFTER))
                             || !step.name.equals(execution.getLifecyclePhase()));
         }
@@ -1011,7 +1034,7 @@ public class BuildPlanExecutor {
                             if (resolved != null && resolved.startsWith(AT)) {
                                 resolved = resolved.substring(AT.length());
                             }
-                            if (descriptor.isAggregator()
+                            if (aggregatesChildren(descriptor)
                                     && Objects.equals(resolved, phase)
                                     && plan.step(reactorParent, phase)
                                             .filter(step -> !step.skip.get())
