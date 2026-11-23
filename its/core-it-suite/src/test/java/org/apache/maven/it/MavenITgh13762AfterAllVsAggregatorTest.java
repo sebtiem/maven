@@ -20,6 +20,8 @@ package org.apache.maven.it;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
@@ -44,6 +46,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  *       instead of the flag. These tests are expected to pass once the concurrent builder gives such goals the
  *       same aggregation semantics as {@code aggregator = true}.</li>
  * </ul>
+ * Two further groups of tests cover situations outside the {@code package} phase of the default lifecycle: a direct
+ * invocation of the goal on the command line, and aggregation in the {@code site} lifecycle, where reports are
+ * typically aggregated.
  * <p>
  * The probe writes {@code target/probe.txt} into the module it runs in, recording which of the child modules
  * {@code a} and {@code b} had completed their {@code package} phase at that moment, for example
@@ -68,6 +73,23 @@ class MavenITgh13762AfterAllVsAggregatorTest extends AbstractMavenIntegrationTes
 
     /** Migrated form proposed instead: a Maven 4 goal with {@code @After(phase = "package", type = CHILDREN)}. */
     private static final String MIGRATED_WITH_AFTER_CHILDREN = "after-children";
+
+    /** Legacy form in the {@code site} lifecycle: {@code aggregator = true}, bound to {@code site}. */
+    private static final String LEGACY_SITE = "aggregator-flag-site";
+
+    /** Proposed form in the {@code site} lifecycle: a Maven 4 goal with {@code @After(phase = "site", ...)}. */
+    private static final String MIGRATED_WITH_AFTER_CHILDREN_SITE = "after-children-site";
+
+    /** The probe as a legacy aggregator, for a direct invocation on the command line. */
+    private static final String LEGACY_GOAL =
+            "org.apache.maven.its.gh13762:probe-maven-plugin:1.0-SNAPSHOT:aggregator-probe";
+
+    /** The probe without the {@code aggregator} flag, which is what remains of a goal migrated to {@code after:all}. */
+    private static final String PLAIN_GOAL = "org.apache.maven.its.gh13762:probe-maven-plugin:1.0-SNAPSHOT:probe";
+
+    /** The probe declaring {@code @After(type = CHILDREN)}, for a direct invocation on the command line. */
+    private static final String AFTER_CHILDREN_GOAL =
+            "org.apache.maven.its.gh13762:probe-v4-maven-plugin:1.0-SNAPSHOT:probe";
 
     private static final String MIGRATION_CLAIM =
             "Replacing aggregator=true by an after:all binding must not change whether, where and when the goal runs";
@@ -200,6 +222,103 @@ class MavenITgh13762AfterAllVsAggregatorTest extends AbstractMavenIntegrationTes
     }
 
     /**
+     * Invoked directly on the command line (together with {@code validate}, see {@link #observeGoal}), the legacy
+     * aggregator runs once, on the root project. A binding to {@code after:all} plays no role in a direct invocation,
+     * so the migrated goal runs in every module.
+     */
+    @Test
+    void testDirectInvocationOfAfterAllMigrationRunsOnlyOnRootProject() throws Exception {
+        // GIVEN
+        final Path reactor = prepare();
+
+        // WHEN
+        final Observation legacy = observeGoal(reactor, "cli-legacy", LEGACY_GOAL);
+        final Observation migrated = observeGoal(reactor, "cli-plain", PLAIN_GOAL);
+
+        // THEN
+        assertEquals(legacy, migrated, MIGRATION_CLAIM);
+    }
+
+    /**
+     * Invoked directly on the command line (together with {@code validate}, see {@link #observeGoal}), the legacy
+     * aggregator runs once, on the root project. The goal declaring
+     * {@code @After(type = CHILDREN)} runs in every module, because a direct invocation is only treated as aggregating
+     * for the {@code aggregator} flag, and an {@code @After} constraint only applies to lifecycle bindings. Expected to
+     * fail even with the proposed change of the concurrent builder.
+     */
+    @Test
+    void testDirectInvocationOfAfterChildrenMigrationRunsOnlyOnRootProject() throws Exception {
+        // GIVEN
+        final Path reactor = prepare();
+
+        // WHEN
+        final Observation legacy = observeGoal(reactor, "cli-legacy", LEGACY_GOAL);
+        final Observation migrated = observeGoal(reactor, "cli-after-children", AFTER_CHILDREN_GOAL);
+
+        // THEN
+        assertEquals(legacy, migrated, AFTER_CHILDREN_CLAIM);
+    }
+
+    /**
+     * Invoked directly on the command line without any lifecycle phase, an aggregator goal must run once, on the root
+     * project. With the concurrent builder, the build currently fails before any goal runs: for an aggregating task
+     * segment the plan only contains the root project, but {@code BuildPlanExecutor.buildInitialPlan()} adds the
+     * planning steps for every project of the reactor, and {@code BuildPlan.addStep()} throws a
+     * {@code NullPointerException} for the projects without steps. This is independent of the migration; the other
+     * direct invocations in this class add {@code validate} to avoid it.
+     */
+    @Test
+    void testDirectInvocationOfAggregatorGoalAloneSucceeds() throws Exception {
+        // GIVEN
+        final Path reactor = prepare();
+
+        // WHEN
+        final Observation observation = observeBuild(reactor, "cli-legacy-alone", List.of(LEGACY_GOAL));
+
+        // THEN
+        assertEquals(
+                new Observation(true, "module a not packaged, module b not packaged", false, false),
+                observation,
+                "A direct invocation of an aggregator goal must run it once, on the root project");
+    }
+
+    /**
+     * An aggregator bound to {@code site} runs once, on the root project, after the children. The {@code site}
+     * lifecycle has no {@code all} phase, so a goal migrated to {@code after:all} never runs in {@code mvn site}.
+     * The children are not packaged in this build; what matters is whether and where the goal runs.
+     */
+    @Test
+    void testAfterAllMigrationRunsInSiteLifecycle() throws Exception {
+        // GIVEN
+        final Path reactor = prepare();
+
+        // WHEN
+        final Observation legacy = observe(reactor, LEGACY_SITE, "site");
+        final Observation migrated = observe(reactor, MIGRATED, "site");
+
+        // THEN
+        assertEquals(legacy, migrated, MIGRATION_CLAIM);
+    }
+
+    /**
+     * An aggregator bound to {@code site} runs once, on the root project, after the children. The goal declaring
+     * {@code @After(phase = "site", type = CHILDREN)}, bound to {@code site}, behaves the same once the concurrent
+     * builder gives such goals the aggregation semantics.
+     */
+    @Test
+    void testAfterChildrenMigrationKeepsBehaviorInSiteLifecycle() throws Exception {
+        // GIVEN
+        final Path reactor = prepare();
+
+        // WHEN
+        final Observation legacy = observe(reactor, LEGACY_SITE, "site");
+        final Observation migrated = observe(reactor, MIGRATED_WITH_AFTER_CHILDREN_SITE, "site");
+
+        // THEN
+        assertEquals(legacy, migrated, AFTER_CHILDREN_CLAIM);
+    }
+
+    /**
      * What a single build of the reactor showed about the probe goal.
      *
      * @param buildSucceeded whether the Maven build succeeded
@@ -233,16 +352,38 @@ class MavenITgh13762AfterAllVsAggregatorTest extends AbstractMavenIntegrationTes
         verifier.verifyErrorFreeLog();
     }
 
+    /**
+     * Builds the reactor up to the given phase, with the given profile active.
+     */
     private Observation observe(final Path reactor, final String profile, final String phase, final String... args)
+            throws Exception {
+        final List<String> arguments = new ArrayList<>();
+        arguments.add("-P" + profile);
+        arguments.addAll(List.of(args));
+        arguments.add(phase);
+        return observeBuild(reactor, profile + "-" + phase, arguments);
+    }
+
+    /**
+     * Invokes the given goal directly on the command line, without a profile. The goal is preceded by
+     * {@code validate}, which adds a non-aggregating task segment with all projects of the reactor. This avoids the
+     * failure of the concurrent builder for an aggregator goal invoked alone (see
+     * {@link #testDirectInvocationOfAggregatorGoalAloneSucceeds()}) and otherwise changes nothing, because no goal of
+     * this test is bound to {@code validate}.
+     */
+    private Observation observeGoal(final Path reactor, final String label, final String goal) throws Exception {
+        return observeBuild(reactor, label, List.of("validate", goal));
+    }
+
+    private Observation observeBuild(final Path reactor, final String label, final List<String> arguments)
             throws Exception {
         clean(reactor);
 
         final Verifier verifier = newVerifier(reactor);
         verifier.setForkJvm(true);
-        verifier.setLogFileName("log-" + profile + "-" + phase + ".txt");
-        verifier.addCliArguments("-b", "concurrent", "-T2", "-P" + profile);
-        verifier.addCliArguments(args);
-        verifier.addCliArgument(phase);
+        verifier.setLogFileName("log-" + label + ".txt");
+        verifier.addCliArguments("-b", "concurrent", "-T2");
+        verifier.addCliArguments(arguments.toArray(String[]::new));
         boolean buildSucceeded;
         try {
             verifier.execute();

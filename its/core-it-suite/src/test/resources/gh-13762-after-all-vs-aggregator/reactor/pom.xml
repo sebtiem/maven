@@ -142,5 +142,51 @@ under the License.
         </plugins>
       </build>
     </profile>
+
+    <!-- Legacy form in the site lifecycle: an aggregator goal bound to site. -->
+    <profile>
+      <id>aggregator-flag-site</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.its.gh13762</groupId>
+            <artifactId>probe-maven-plugin</artifactId>
+            <version>1.0-SNAPSHOT</version>
+            <executions>
+              <execution>
+                <id>probe</id>
+                <phase>site</phase>
+                <goals>
+                  <goal>aggregator-probe</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
+    <!-- Proposed form in the site lifecycle: a Maven 4 goal with @After(phase = "site", type = CHILDREN). -->
+    <profile>
+      <id>after-children-site</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.its.gh13762</groupId>
+            <artifactId>probe-v4-maven-plugin</artifactId>
+            <version>1.0-SNAPSHOT</version>
+            <executions>
+              <execution>
+                <id>probe</id>
+                <phase>site</phase>
+                <goals>
+                  <goal>site-probe</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
   </profiles>
 </project>
