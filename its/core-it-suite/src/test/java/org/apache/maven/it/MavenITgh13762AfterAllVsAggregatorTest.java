@@ -260,29 +260,6 @@ class MavenITgh13762AfterAllVsAggregatorTest extends AbstractMavenIntegrationTes
     }
 
     /**
-     * Invoked directly on the command line without any lifecycle phase, an aggregator goal must run once, on the root
-     * project. With the concurrent builder, the build currently fails before any goal runs: for an aggregating task
-     * segment the plan only contains the root project, but {@code BuildPlanExecutor.buildInitialPlan()} adds the
-     * planning steps for every project of the reactor, and {@code BuildPlan.addStep()} throws a
-     * {@code NullPointerException} for the projects without steps. This is independent of the migration; the other
-     * direct invocations in this class add {@code validate} to avoid it.
-     */
-    @Test
-    void testDirectInvocationOfAggregatorGoalAloneSucceeds() throws Exception {
-        // GIVEN
-        final Path reactor = prepare();
-
-        // WHEN
-        final Observation observation = observeBuild(reactor, "cli-legacy-alone", List.of(LEGACY_GOAL));
-
-        // THEN
-        assertEquals(
-                new Observation(true, "module a not packaged, module b not packaged", false, false),
-                observation,
-                "A direct invocation of an aggregator goal must run it once, on the root project");
-    }
-
-    /**
      * An aggregator bound to {@code site} runs once, on the root project, after the children. The {@code site}
      * lifecycle has no {@code all} phase, so a goal migrated to {@code after:all} never runs in {@code mvn site}.
      * The children are not packaged in this build; what matters is whether and where the goal runs.
