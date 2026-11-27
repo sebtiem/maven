@@ -23,6 +23,7 @@ import javax.inject.Named;
 import javax.inject.Provider;
 import javax.inject.Singleton;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -376,7 +377,13 @@ public class MojoExecutor {
         eventCatapult.fire(ExecutionEvent.Type.MojoStarted, session, mojoExecution);
         try {
             try {
+                MavenProject project = session.getCurrentProject();
+                File artifactFileBefore = project != null && project.getArtifact() != null
+                        ? project.getArtifact().getFile()
+                        : null;
                 pluginManager.executeMojo(session, mojoExecution);
+                pomArtifactFileWarning(project, artifactFileBefore, mojoExecution)
+                        .ifPresent(LOGGER::warn);
             } catch (MojoFailureException
                     | PluginManagerException
                     | PluginConfigurationException
@@ -394,6 +401,34 @@ public class MojoExecutor {
         }
     }
 
+    /**
+     * MNG-8138: a mojo (e.g. {@code jar:jar} on a pom-packaged project) may set a file on
+     * {@code project.getArtifact()} while that artifact has the POM's coordinates. Install and deploy then use the
+     * project's POM file instead, so the mojo's output is not published; say so, naming the mojo. Only the mojo that
+     * changed the file is named, not every later mojo that runs while the file is still set.
+     */
+    static Optional<String> pomArtifactFileWarning(
+            MavenProject project, File artifactFileBefore, MojoExecution mojoExecution) {
+        if (project == null || project.getFile() == null) {
+            return Optional.empty();
+        }
+        org.apache.maven.artifact.Artifact artifact = project.getArtifact();
+        if (artifact == null
+                || artifact.getFile() == null
+                || artifact.getArtifactHandler() == null
+                || !"pom".equals(artifact.getArtifactHandler().getExtension())
+                || (artifact.getClassifier() != null
+                        && !artifact.getClassifier().isEmpty())
+                || artifact.getFile().equals(project.getFile())
+                || artifact.getFile().equals(artifactFileBefore)) {
+            return Optional.empty();
+        }
+        return Optional.of("Plugin " + mojoExecution.getPlugin().getId() + ":" + mojoExecution.getGoal()
+                + " set the file of " + artifact.getGroupId() + ":" + artifact.getArtifactId() + ":pom:"
+                + artifact.getVersion() + " to " + artifact.getFile() + ", but that artifact is the project's POM ("
+                + project.getFile() + "). The POM file is used; attach the file with a classifier instead.");
+    }
+
     public void ensureDependenciesAreResolved(
             MojoDescriptor mojoDescriptor, MavenSession session, DependencyContext dependencyContext)
             throws LifecycleExecutionException {
@@ -401,7 +436,16 @@ public class MojoExecutor {
         MavenProject project = dependencyContext.getProject();
         boolean aggregating = mojoDescriptor.isAggregator();
 
-        if (dependencyContext.isResolutionRequiredForCurrentProject()) {
+        // A fresh DependencyContext starts out needing resolution even when its step has no scopes at
+        // all (the check is an identity comparison on the project's dependency artifacts). Resolving an
+        // empty scope set would replace the project's resolved artifacts with an empty set, which is read
+        // by later mojos of another step of the same project (#14081). The artifact filter is still
+        // written below for every mojo, including a null filter for MNG-3297.
+        if (dependencyContext.isResolutionRequiredForCurrentProject()
+                && (!dependencyContext.getScopesToCollectForCurrentProject().isEmpty()
+                        || !dependencyContext
+                                .getScopesToResolveForCurrentProject()
+                                .isEmpty())) {
             Collection<String> scopesToCollect = dependencyContext.getScopesToCollectForCurrentProject();
             Collection<String> scopesToResolve = dependencyContext.getScopesToResolveForCurrentProject();
 
