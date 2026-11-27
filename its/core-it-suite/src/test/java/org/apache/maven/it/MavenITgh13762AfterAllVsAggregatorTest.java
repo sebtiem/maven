@@ -343,10 +343,7 @@ class MavenITgh13762AfterAllVsAggregatorTest extends AbstractMavenIntegrationTes
 
     /**
      * Invokes the given goal directly on the command line, without a profile. The goal is preceded by
-     * {@code validate}, which adds a non-aggregating task segment with all projects of the reactor. This avoids the
-     * failure of the concurrent builder for an aggregator goal invoked alone (see
-     * {@link #testDirectInvocationOfAggregatorGoalAloneSucceeds()}) and otherwise changes nothing, because no goal of
-     * this test is bound to {@code validate}.
+     * {@code validate}, which adds a non-aggregating task segment with all projects of the reactor.
      */
     private Observation observeGoal(final Path reactor, final String label, final String goal) throws Exception {
         return observeBuild(reactor, label, List.of("validate", goal));
